@@ -1,0 +1,13 @@
+Month	Your Home (kWh)	Efficient Similar Homes (kWh)	All Similar Homes (kWh)
+Sep '24	1268	300	650
+Oct '24	1048	250	600
+Nov '24	2092	300	650
+Dec '24	2985	350	700
+Jan '25	5444	450	850
+Feb '25	5354	375	700
+Mar '25	4256	300	650
+Apr '25	2753	250	550
+May '25	1878	200	500
+Jun '25	1387	250	550
+Jul '25	1334	400	850
+Aug '25	1370	450	900
