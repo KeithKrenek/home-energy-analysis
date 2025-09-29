@@ -31,7 +31,7 @@ from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.cluster import KMeans
-import shap
+# import shap
 from scipy import stats
 from statsmodels.tsa.seasonal import seasonal_decompose
 import openpyxl
@@ -53,6 +53,7 @@ class EnergyDataProcessor:
         self.data_dir = Path(data_dir)
         self.eastern_tz = pytz.timezone('America/New_York')
         self.scaler = StandardScaler()
+        self.tz = pytz.timezone("America/New_York")
         
     def load_and_process_data(self) -> Dict[str, pd.DataFrame]:
         """Load and process all energy data sources with proper timezone handling."""
@@ -187,16 +188,81 @@ class EnergyDataProcessor:
             logging.error(f"Error loading weather data: {e}")
             return pd.DataFrame()
     
-    def _load_temperature_data(self) -> pd.DataFrame:
-        """Load indoor temperature measurements."""
-        try:
-            df = pd.read_csv(self.data_dir / 'elitech_temperatures.csv')
-            logging.info(f"Loaded temperature data: {len(df)} records")
-            return df
-        except Exception as e:
-            logging.error(f"Error loading temperature data: {e}")
-            return pd.DataFrame()
+    # def _load_temperature_data(self) -> pd.DataFrame:
+    #     """Load indoor temperature measurements."""
+    #     try:
+    #         df = pd.read_csv(self.data_dir / 'elitech_temperatures.csv')
+    #         logging.info(f"Loaded temperature data: {len(df)} records")
+    #         return df
+    #     except Exception as e:
+    #         logging.error(f"Error loading temperature data: {e}")
+    #         return pd.DataFrame()
     
+    def _load_temperature_data(self) -> pd.DataFrame:
+        """Load and reshape room temperature data from the time-matched CSV."""
+        try:
+            # Load the dataset
+            df = pd.read_csv('data/elitech_temperatures_time_matched.csv')
+
+            # Convert the 'DateTime' column from Excel's serial number format to datetime objects.
+            # Excel's date system starts from 1899-12-30, so we use that as the origin.
+            df['DateTime'] = pd.to_datetime(df['DateTime'], unit='D', origin='1899-12-30')
+
+            # Reshape the DataFrame from wide to long format. 'DateTime' is the identifier,
+            # and all other columns are treated as measurement variables.
+            melted_df = df.melt(id_vars=['DateTime'], var_name='Location', value_name='temp_c')
+
+            # Rename 'DateTime' to 'Timestamp' for consistency with the original function's output.
+            melted_df.rename(columns={'DateTime': 'Timestamp'}, inplace=True)
+
+            # === FIX: Make the Timestamp column timezone-aware to match other datasets ===
+            melted_df['Timestamp'] = self._ensure_timezone(melted_df['Timestamp'])
+
+            # Remove any rows that have missing temperature or timestamp values.
+            melted_df.dropna(subset=['temp_c', 'Timestamp'], inplace=True)
+            
+            # Ensure 'temp_c' is a numeric type, converting any non-numeric values to NaN,
+            # and then drop any rows that might have been converted to NaN.
+            melted_df['temp_c'] = pd.to_numeric(melted_df['temp_c'], errors='coerce')
+            melted_df.dropna(subset=['temp_c'], inplace=True)
+
+            # Sort the entire DataFrame by the 'Timestamp' to have a chronological order.
+            result = melted_df.sort_values('Timestamp').reset_index(drop=True)
+
+            # Print a success message with a summary of the loaded data.
+            locations = result['Location'].unique()
+            print(f"✓ Room Temps: {len(result)} readings, {len(locations)} locations")
+            
+            return result
+
+        except FileNotFoundError:
+            print("✗ Room temps loading failed: File not found.")
+            return pd.DataFrame()
+        except Exception as e:
+            print(f"✗ Room temps loading failed: {e}")
+            return pd.DataFrame()
+        
+    def _ensure_timezone(self, dt_series: pd.Series) -> pd.Series:
+        """Robustly handle timezone conversion with DST awareness."""
+        dt_series = pd.to_datetime(dt_series, errors='coerce')
+        
+        if hasattr(dt_series, 'dt'):
+            if dt_series.dt.tz is None:
+                # Localize with DST handling
+                try:
+                    return dt_series.dt.tz_localize(self.tz, ambiguous='infer', nonexistent='shift_forward')
+                except:
+                    # Fallback for ambiguous times
+                    return dt_series.dt.tz_localize(self.tz, ambiguous=False, nonexistent='shift_forward')
+            else:
+                return dt_series.dt.tz_convert(self.tz)
+        else:
+            # Handle scalar
+            if dt_series.tzinfo is None:
+                return self.tz.localize(dt_series, is_dst=None)
+            else:
+                return dt_series.astimezone(self.tz)
+            
     def _load_excel_data(self) -> Dict[str, pd.DataFrame]:
         """Load Excel workbook with multiple sheets."""
         try:

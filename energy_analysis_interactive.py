@@ -401,47 +401,91 @@ class EnergyDataLoader:
         except Exception as e:
             print(f"✗ Weather loading failed: {e}")
             return pd.DataFrame()
-    
+
     def _load_room_temperatures(self) -> pd.DataFrame:
-        """Load and reshape room temperature data from wide format."""
+        """Load and reshape room temperature data from the time-matched CSV."""
         try:
-            df = pd.read_csv('data/elitech_temperatures.csv')
+            # Load the dataset
+            df = pd.read_csv('data/elitech_temperatures_time_matched.csv')
+
+            # Convert the 'DateTime' column from Excel's serial number format to datetime objects.
+            # Excel's date system starts from 1899-12-30, so we use that as the origin.
+            df['DateTime'] = pd.to_datetime(df['DateTime'], unit='D', origin='1899-12-30')
+
+            # Reshape the DataFrame from wide to long format. 'DateTime' is the identifier,
+            # and all other columns are treated as measurement variables.
+            melted_df = df.melt(id_vars=['DateTime'], var_name='Location', value_name='temp_c')
+
+            # Rename 'DateTime' to 'Timestamp' for consistency with the original function's output.
+            melted_df.rename(columns={'DateTime': 'Timestamp'}, inplace=True)
+
+            # === FIX: Make the Timestamp column timezone-aware to match other datasets ===
+            melted_df['Timestamp'] = self._ensure_timezone(melted_df['Timestamp'])
+
+            # Remove any rows that have missing temperature or timestamp values.
+            melted_df.dropna(subset=['temp_c', 'Timestamp'], inplace=True)
             
-            # Identify DateTime/Value column pairs
-            pairs = []
-            for i, col in enumerate(df.columns):
-                if 'DateTime' in str(col):
-                    # Find next non-DateTime column
-                    for j in range(i+1, len(df.columns)):
-                        if 'DateTime' not in str(df.columns[j]) and 'Unnamed' not in str(df.columns[j]):
-                            pairs.append((col, df.columns[j]))
-                            break
+            # Ensure 'temp_c' is a numeric type, converting any non-numeric values to NaN,
+            # and then drop any rows that might have been converted to NaN.
+            melted_df['temp_c'] = pd.to_numeric(melted_df['temp_c'], errors='coerce')
+            melted_df.dropna(subset=['temp_c'], inplace=True)
+
+            # Sort the entire DataFrame by the 'Timestamp' to have a chronological order.
+            result = melted_df.sort_values('Timestamp').reset_index(drop=True)
+
+            # Print a success message with a summary of the loaded data.
+            locations = result['Location'].unique()
+            print(f"✓ Room Temps: {len(result)} readings, {len(locations)} locations")
             
-            # Reshape to long format
-            frames = []
-            for dt_col, val_col in pairs:
-                temp_df = df[[dt_col, val_col]].copy()
-                temp_df.columns = ['Timestamp', 'temp_c']
-                temp_df['Timestamp'] = self._ensure_timezone(temp_df['Timestamp'])
-                temp_df['temp_c'] = pd.to_numeric(temp_df['temp_c'], errors='coerce')
-                temp_df['Location'] = str(val_col).strip()
-                temp_df = temp_df.dropna(subset=['Timestamp', 'temp_c'])
-                frames.append(temp_df)
-            
-            if frames:
-                result = pd.concat(frames, ignore_index=True)
-                result = result.sort_values('Timestamp').reset_index(drop=True)
-                
-                locations = result['Location'].unique()
-                print(f"✓ Room Temps: {len(result)} readings, {len(locations)} locations")
-                return result
-            else:
-                print("✗ No room temperature data found")
-                return pd.DataFrame()
-                
+            return result
+
+        except FileNotFoundError:
+            print("✗ Room temps loading failed: File not found.")
+            return pd.DataFrame()
         except Exception as e:
             print(f"✗ Room temps loading failed: {e}")
             return pd.DataFrame()
+        
+    # def _load_room_temperatures(self) -> pd.DataFrame:
+    #     """Load and reshape room temperature data from wide format."""
+    #     try:
+    #         df = pd.read_csv('data/elitech_temperatures_time_matched.csv')
+            
+    #         # Identify DateTime/Value column pairs
+    #         pairs = []
+    #         for i, col in enumerate(df.columns):
+    #             if 'DateTime' in str(col):
+    #                 # Find next non-DateTime column
+    #                 for j in range(i+1, len(df.columns)):
+    #                     if 'DateTime' not in str(df.columns[j]) and 'Unnamed' not in str(df.columns[j]):
+    #                         pairs.append((col, df.columns[j]))
+    #                         break
+            
+    #         # Reshape to long format
+    #         frames = []
+    #         for dt_col, val_col in pairs:
+    #             temp_df = df[[dt_col, val_col]].copy()
+    #             temp_df.columns = ['Timestamp', 'temp_c']
+    #             temp_df['Timestamp'] = self._ensure_timezone(temp_df['Timestamp'])
+    #             temp_df['temp_c'] = pd.to_numeric(temp_df['temp_c'], errors='coerce')
+    #             temp_df['Location'] = str(val_col).strip()
+    #             temp_df = temp_df.dropna(subset=['Timestamp', 'temp_c'])
+    #             frames.append(temp_df)
+            
+    #         if frames:
+    #             result = pd.concat(frames, ignore_index=True)
+    #             result = result.sort_values('Timestamp').reset_index(drop=True)
+                
+    #             locations = result['Location'].unique()
+    #             print(f"✓ Room Temps: {len(result)} readings, {len(locations)} locations")
+    #             return result
+    #         else:
+    #             print("✗ No room temperature data found")
+    #             return pd.DataFrame()
+                
+    #     except Exception as e:
+    #         print(f"✗ Room temps loading failed: {e}")
+    #         return pd.DataFrame()
     
     def _load_neighbors_comparison(self) -> pd.DataFrame:
         """Load recent neighbor comparison data."""
